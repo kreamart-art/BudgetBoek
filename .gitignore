@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+
+# omgeving & geheimen
+.env
+.env.local
+
+# database
+*.db
+*.db-wal
+*.db-shm
+
+# logs & rommel
+*.log
+.DS_Store
