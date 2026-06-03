@@ -59,12 +59,17 @@ De app beheert alles als één JSON-object (`transactions`, `goals`, `budgets`, 
 
 ## Naar productie
 
-- **Sterke `JWT_SECRET`** en zet `CORS_ORIGIN` op je echte frontend-domein (geen `*`).
-- **HTTPS** verplicht (zet er bijv. een reverse proxy als Caddy of Nginx voor).
-- **Database**: SQLite is prima voor een enkele server. Op hosts met een tijdelijk
-  bestandssysteem verlies je data bij een herstart — gebruik dan Postgres. Vervang
-  `db.js` door een `pg`-pool en zet de queries om naar `$1, $2`-placeholders; de
-  query-logica blijft gelijk.
+Volledige handleiding (Coolify + Vercel, of Docker Compose + Caddy): **`docs/DEPLOYMENT.md`**.
+
+- **Sterke `JWT_SECRET`** (in productie ≥ 32 tekens) en `CORS_ORIGIN` op je echte
+  frontend-domein (geen `*`). Met `NODE_ENV=production` weigert de server te starten als dit
+  niet klopt.
+- **HTTPS** verplicht (Coolify/Caddy regelen dit automatisch). Achter een proxy: zet
+  `TRUST_PROXY=1` voor correcte rate-limiting.
+- **Database**: SQLite (standaard) is prima voor één server met een persistente schijf. Op
+  hosts met een tijdelijk bestandssysteem zet je `DB_DRIVER=postgres` + `DATABASE_URL` — de
+  Postgres-driver zit ingebouwd (`db/postgres.js`), dezelfde queries. Zonder `DB_DRIVER` maar
+  mét `DATABASE_URL` kiest de app automatisch Postgres.
 - **Tokens**: nu in `localStorage` (eenvoudig). Veiliger tegen XSS is een `httpOnly`
   cookie met CSRF-bescherming; dat is een grotere wijziging.
 - Overweeg een wachtwoord-reset-flow en e-mailverificatie als je echte gebruikers krijgt.

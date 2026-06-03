@@ -1,4 +1,4 @@
-// push-routes.js — pushberichten en herinnering-planner.
+// push-routes.js — pushberichten en herinnering-planner (driver-neutraal, async).
 // Aansluiten in server.js:  import { installPush } from "./push-routes.js";
 //                           installPush(app, { auth });   // ná het definiëren van `auth`
 import webpush from "web-push";          // npm install web-push
@@ -6,21 +6,11 @@ import db from "./db.js";
 
 const { VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT = "mailto:admin@example.com" } = process.env;
 
+// Vangt fouten in async-routes af zodat een request nooit blijft hangen.
+const aw = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => { console.error(e); res.status(500).json({ error: "Er ging iets mis op de server" }); });
+
 export function installPush(app, { auth }) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS push_subscriptions (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id      INTEGER NOT NULL,
-      endpoint     TEXT UNIQUE NOT NULL,
-      subscription TEXT NOT NULL,
-      created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    );
-    CREATE TABLE IF NOT EXISTS sent_reminders (
-      key     TEXT PRIMARY KEY,
-      sent_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-  `);
+  // De tabellen (push_subscriptions, sent_reminders) maakt de db-laag aan in db.init().
 
   const enabled = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY);
   if (enabled) webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
@@ -29,38 +19,39 @@ export function installPush(app, { auth }) {
   // ---------- abonnementen ----------
   app.get("/api/push/key", (_req, res) => res.json({ key: VAPID_PUBLIC_KEY || null }));
 
-  app.post("/api/push/subscribe", auth, (req, res) => {
+  app.post("/api/push/subscribe", auth, aw(async (req, res) => {
     const sub = req.body?.subscription;
     if (!sub?.endpoint) return res.status(400).json({ error: "Ongeldige subscription" });
-    db.prepare(`
-      INSERT INTO push_subscriptions (user_id, endpoint, subscription) VALUES (?, ?, ?)
-      ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, subscription = excluded.subscription
-    `).run(req.user.id, sub.endpoint, JSON.stringify(sub));
+    await db.run(
+      `INSERT INTO push_subscriptions (user_id, endpoint, subscription) VALUES (?, ?, ?)
+       ON CONFLICT(endpoint) DO UPDATE SET user_id = excluded.user_id, subscription = excluded.subscription`,
+      req.user.id, sub.endpoint, JSON.stringify(sub)
+    );
     res.json({ ok: true });
-  });
+  }));
 
-  app.post("/api/push/unsubscribe", auth, (req, res) => {
-    if (req.body?.endpoint) db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?").run(req.body.endpoint, req.user.id);
+  app.post("/api/push/unsubscribe", auth, aw(async (req, res) => {
+    if (req.body?.endpoint) await db.run("DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?", req.body.endpoint, req.user.id);
     res.json({ ok: true });
-  });
+  }));
 
   async function sendToUser(userId, payload) {
-    const subs = db.prepare("SELECT endpoint, subscription FROM push_subscriptions WHERE user_id = ?").all(userId);
+    const subs = await db.all("SELECT endpoint, subscription FROM push_subscriptions WHERE user_id = ?", userId);
     for (const s of subs) {
       try {
         await webpush.sendNotification(JSON.parse(s.subscription), JSON.stringify(payload));
       } catch (e) {
         // 404/410 = abonnement bestaat niet meer → opruimen
-        if (e.statusCode === 404 || e.statusCode === 410) db.prepare("DELETE FROM push_subscriptions WHERE endpoint = ?").run(s.endpoint);
+        if (e.statusCode === 404 || e.statusCode === 410) await db.run("DELETE FROM push_subscriptions WHERE endpoint = ?", s.endpoint);
       }
     }
   }
 
-  app.post("/api/push/test", auth, async (req, res) => {
+  app.post("/api/push/test", auth, aw(async (req, res) => {
     if (!enabled) return res.status(503).json({ error: "Pushberichten zijn niet geconfigureerd op de server" });
     await sendToUser(req.user.id, { title: "Budgetboek", body: "Testmelding — pushberichten werken! 🎉", url: "/" });
     res.json({ ok: true });
-  });
+  }));
 
   // ---------- planner ----------
   const ymd = (d) => d.toISOString().slice(0, 10);
@@ -70,29 +61,30 @@ export function installPush(app, { auth }) {
   async function checkReminders() {
     if (!enabled) return;
     const today = ymd(new Date());
-    for (const row of db.prepare("SELECT household_id, data FROM budgets").all()) {
+    for (const row of await db.all("SELECT household_id, data FROM budgets")) {
       let data; try { data = JSON.parse(row.data); } catch { continue; }
       const txs = (data.transactions || []).filter((t) => t?.reminder?.enabled && t.date);
       if (!txs.length) continue;
-      const members = db.prepare("SELECT id FROM users WHERE household_id = ?").all(row.household_id);
+      const members = await db.all("SELECT id FROM users WHERE household_id = ?", row.household_id);
       for (const t of txs) {
         const days = Math.max(0, Number(t.reminder.daysBefore) || 0);
         const dueStr = ymd(new Date(t.date));
         const fireStr = ymd(minusDays(t.date, days));
         if (today < fireStr || today > dueStr) continue;            // alleen tussen meld- en vervaldatum
         const key = `${row.household_id}:${t.id}:${dueStr}`;
-        if (db.prepare("SELECT 1 FROM sent_reminders WHERE key = ?").get(key)) continue; // al verstuurd
+        if (await db.get("SELECT 1 FROM sent_reminders WHERE key = ?", key)) continue; // al verstuurd
         const left = daysBetween(today, dueStr);
         const when = left <= 0 ? "vandaag" : left === 1 ? "morgen" : `over ${left} dagen`;
         const amount = new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(t.amount || 0);
         const payload = { title: "Herinnering", body: `${t.description || t.category || "Transactie"} — ${amount} ${when}.`, url: "/", tag: key };
         for (const m of members) await sendToUser(m.id, payload);
-        db.prepare("INSERT OR REPLACE INTO sent_reminders (key) VALUES (?)").run(key);
+        await db.run("INSERT INTO sent_reminders (key) VALUES (?) ON CONFLICT (key) DO NOTHING", key);
       }
     }
   }
 
-  setTimeout(checkReminders, 5000);                 // kort na opstarten
-  setInterval(checkReminders, 15 * 60 * 1000);      // daarna elk kwartier
-  app.post("/api/push/check-now", auth, async (_req, res) => { await checkReminders(); res.json({ ok: true }); }); // handig bij testen
+  const runCheck = () => checkReminders().catch((e) => console.error("herinnering-check mislukt:", e));
+  setTimeout(runCheck, 5000);                 // kort na opstarten
+  setInterval(runCheck, 15 * 60 * 1000);      // daarna elk kwartier
+  app.post("/api/push/check-now", auth, aw(async (_req, res) => { await checkReminders(); res.json({ ok: true }); })); // handig bij testen
 }

@@ -1,0 +1,13 @@
+# Caddy regelt automatisch geldige HTTPS-certificaten (Let's Encrypt) voor je domeinen.
+# Vervang de domeinen via .env (APP_DOMAIN / API_DOMAIN) of pas ze hier direct aan.
+# Voor lokaal proberen werken *.localhost met Caddy's interne CA.
+
+{$APP_DOMAIN:app.localhost} {
+	encode gzip
+	reverse_proxy frontend:80
+}
+
+{$API_DOMAIN:api.localhost} {
+	encode gzip
+	reverse_proxy backend:4000
+}
