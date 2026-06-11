@@ -30,10 +30,12 @@ const CATS = {
   prive: {
     uitgave: ["Wonen", "Boodschappen", "Vervoer", "Verzekeringen", "Abonnementen", "Vrije tijd", "Zorg", "Overig"],
     inkomst: ["Salaris", "Toeslagen", "Cadeau", "Overig"],
+    sparen: ["Naar spaarrekening", "Van spaarrekening", "Overig"],
   },
   zakelijk: {
     uitgave: ["Software & tools", "Marketing", "Kantoor", "Belasting & BTW", "Verzekeringen", "Uitbesteding", "Overig"],
     inkomst: ["Freelance", "Project", "Overig"],
+    sparen: ["Naar spaarrekening", "Van spaarrekening", "Overig"],
   },
 };
 const DEFAULTS = { reservePct: 35, reserveOn: true };
@@ -122,6 +124,7 @@ export default function BudgetApp({ onLogout }) {
     let saldo = 0, mIn = 0, mUit = 0, prevUit = 0;
     const catMap = {};
     for (const x of tx) {
+      if (x.type === "sparen") continue;   // overboeking tussen eigen rekeningen → neutraal
       saldo += x.type === "inkomst" ? x.amount : -x.amount;
       const k = monthKey(new Date(x.date));
       if (k === selKey) {
@@ -139,7 +142,7 @@ export default function BudgetApp({ onLogout }) {
     const yr = new Date().getFullYear();
     let ink = 0, uit = 0;
     for (const x of data.transactions) {
-      if (data.deleted?.[x.id] || x.scope !== "zakelijk") continue;
+      if (data.deleted?.[x.id] || x.scope !== "zakelijk" || x.type === "sparen") continue;
       if (new Date(x.date).getFullYear() !== yr) continue;
       if (x.type === "inkomst") ink += x.amount; else uit += x.amount;
     }
@@ -153,11 +156,11 @@ export default function BudgetApp({ onLogout }) {
     for (let m = 5; m >= 0; m--) {
       const d = new Date(now.getFullYear(), now.getMonth() - m, 1);
       const k = monthKey(d); let net = 0;
-      for (const x of tx) if (monthKey(new Date(x.date)) === k) net += x.type === "inkomst" ? x.amount : -x.amount;
+      for (const x of tx) if (x.type !== "sparen" && monthKey(new Date(x.date)) === k) net += x.type === "inkomst" ? x.amount : -x.amount;
       hist.push({ label: monthLabelShort(d), net });
     }
     let recurNet = 0;
-    for (const x of tx) if (x.recurring) recurNet += x.type === "inkomst" ? x.amount : -x.amount;
+    for (const x of tx) if (x.recurring && x.type !== "sparen") recurNet += x.type === "inkomst" ? x.amount : -x.amount;
     const last3avg = hist.slice(-3).reduce((s, h) => s + h.net, 0) / 3;
     const monthlyEst = Math.round((recurNet + last3avg) / 2);
     const rows = hist.map((h) => ({ label: h.label, saldo: null, prognose: null }));
@@ -397,7 +400,7 @@ function Transacties({ tx, onAdd, onEdit, onDel, onBookRecurring, onOpenCsv }) {
         <div className="searchbar"><Search size={16} className="si" /><input placeholder="Zoek op naam of categorie…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
         <div className="filterrow">
           <div className="seg sm" style={{ flex: 1, marginBottom: 0 }}>
-            {[["alles", "Alles"], ["inkomst", "In"], ["uitgave", "Uit"]].map(([k, l]) => (<button key={k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)}>{l}</button>))}
+            {[["alles", "Alles"], ["inkomst", "In"], ["uitgave", "Uit"], ["sparen", "Spaar"]].map(([k, l]) => (<button key={k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)}>{l}</button>))}
           </div>
           <button className="btn small ghost" onClick={onBookRecurring} title="Vaste lasten boeken"><Repeat size={14} /> Vaste lasten</button>
           <button className="btn small ghost" onClick={onOpenCsv} title="Bankafschrift importeren"><FileUp size={14} /> CSV</button>
@@ -411,7 +414,7 @@ function Transacties({ tx, onAdd, onEdit, onDel, onBookRecurring, onOpenCsv }) {
             <div className="txmonth">{month}</div>
             {items.map((x) => (
               <div key={x.id} className="txrow" onClick={() => onEdit(x)}>
-                <div className={`tic ${x.type}`}>{x.type === "inkomst" ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}</div>
+                <div className={`tic ${x.type}`}>{x.type === "inkomst" ? <ArrowUpRight size={16} /> : x.type === "sparen" ? <PiggyBank size={16} /> : <ArrowDownRight size={16} />}</div>
                 <div className="txmid">
                   <div className="txdesc">{x.description || x.category}
                     {x.recurring && <span className="pill"><Repeat size={10} /> mnd</span>}
@@ -419,7 +422,7 @@ function Transacties({ tx, onAdd, onEdit, onDel, onBookRecurring, onOpenCsv }) {
                   </div>
                   <div className="txmeta">{x.category} · {x.scope === "prive" ? "Privé" : "Zakelijk"} · {fmtDate(x.date)}</div>
                 </div>
-                <div className={`txamt ${x.type === "inkomst" ? "pos" : "neg"}`}>{x.type === "inkomst" ? "+" : "−"}{fmtEURc(x.amount)}</div>
+                <div className={`txamt ${x.type === "inkomst" ? "pos" : x.type === "sparen" ? "spaar" : "neg"}`}>{x.type === "inkomst" ? "+" : x.type === "sparen" ? "" : "−"}{fmtEURc(x.amount)}</div>
                 <button className="del" onClick={(e) => { e.stopPropagation(); onDel(x.id); }} aria-label="Verwijder"><Trash2 size={15} /></button>
               </div>
             ))}
@@ -557,8 +560,9 @@ function TxModal({ initial, onClose, onSave, defScope }) {
 
   return (
     <Modal title={initial ? "Transactie bewerken" : "Nieuwe transactie"} onClose={onClose}>
-      <div className="seg"><button className={type === "uitgave" ? "on neg" : ""} onClick={() => { setType("uitgave"); setCategory(""); }}>Uitgave</button><button className={type === "inkomst" ? "on pos" : ""} onClick={() => { setType("inkomst"); setCategory(""); }}>Inkomst</button></div>
+      <div className="seg seg3"><button className={type === "uitgave" ? "on neg" : ""} onClick={() => { setType("uitgave"); setCategory(""); }}>Uitgave</button><button className={type === "inkomst" ? "on pos" : ""} onClick={() => { setType("inkomst"); setCategory(""); }}>Inkomst</button><button className={type === "sparen" ? "on spaar" : ""} onClick={() => { setType("sparen"); setCategory(""); }}>Sparen</button></div>
       <div className="seg sm"><button className={scope === "prive" ? "on" : ""} onClick={() => { setScope("prive"); setCategory(""); }}>Privé</button><button className={scope === "zakelijk" ? "on" : ""} onClick={() => { setScope("zakelijk"); setCategory(""); }}>Zakelijk</button></div>
+      {type === "sparen" && <p className="spaarhint"><PiggyBank size={13} /> Overboeking tussen je eigen rekeningen — telt niet mee als inkomst of uitgave, en verandert je saldo niet.</p>}
       <label className="fld"><span>Bedrag</span><input type="number" inputMode="decimal" placeholder="0,00" value={amount} onChange={(e) => setAmount(e.target.value)} autoFocus /></label>
       <label className="fld"><span>Categorie</span><select value={category || cats[0]} onChange={(e) => setCategory(e.target.value)}>{cats.map((c) => <option key={c} value={c}>{c}</option>)}</select></label>
       <label className="fld"><span>Omschrijving</span><input type="text" placeholder="bijv. Huur, boodschappen…" value={description} onChange={(e) => setDescription(e.target.value)} /></label>
@@ -734,12 +738,15 @@ function Shell({ children }) {
         .txrow:last-child { border-bottom:none; }
         .tic { width:34px; height:34px; border-radius:10px; display:grid; place-items:center; flex-shrink:0; }
         .tic.inkomst { background:rgba(46,125,91,0.12); color:var(--pos); } .tic.uitgave { background:rgba(194,75,51,0.1); color:var(--neg); }
+        .tic.sparen { background:rgba(46,111,142,0.12); color:#2E6F8E; }
         .txmid { flex:1; min-width:0; }
         .txdesc { font-size:14.5px; font-weight:600; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
         .txmeta { font-size:12px; color:var(--muted); margin-top:1px; }
         .pill { display:inline-flex; align-items:center; gap:3px; font-size:9.5px; font-weight:700; text-transform:uppercase; background:var(--line); color:var(--muted); padding:2px 6px; border-radius:20px; letter-spacing:.3px; }
         .pill.gold { background:rgba(194,155,62,0.18); color:#9a7a28; }
         .txamt { font-family:'Fraunces',serif; font-size:15.5px; font-weight:500; flex-shrink:0; }
+        .txamt.spaar { color:var(--muted); }
+        .spaarhint { display:flex; align-items:center; gap:7px; font-size:13px; color:#2E6F8E; background:rgba(46,111,142,0.07); border-radius:10px; padding:10px 12px; margin-bottom:14px; line-height:1.4; }
         .del { background:none; border:none; color:var(--muted); cursor:pointer; padding:5px; border-radius:8px; flex-shrink:0; opacity:.5; transition:.15s; }
         .del:hover { opacity:1; color:var(--neg); background:rgba(194,75,51,0.08); }
         .hint { font-size:11.5px; color:var(--muted); display:flex; align-items:center; gap:5px; margin-top:12px; justify-content:center; }
@@ -774,9 +781,10 @@ function Shell({ children }) {
         .x { background:var(--paper); border:none; border-radius:9px; padding:7px; cursor:pointer; color:var(--muted); display:grid; place-items:center; }
         .seg { display:grid; grid-template-columns:1fr 1fr; gap:6px; background:var(--paper); padding:4px; border-radius:12px; margin-bottom:11px; }
         .seg.sm { margin-bottom:14px; grid-template-columns:repeat(auto-fit,minmax(0,1fr)); }
+        .seg.seg3 { grid-template-columns:1fr 1fr 1fr; }
         .seg button { border:none; background:transparent; padding:9px; border-radius:9px; font-size:13.5px; font-weight:600; font-family:inherit; cursor:pointer; color:var(--muted); transition:.15s; }
         .seg button.on { background:var(--card); color:var(--ink); box-shadow:0 1px 3px rgba(0,0,0,0.08); }
-        .seg button.on.pos { color:var(--pos); } .seg button.on.neg { color:var(--neg); }
+        .seg button.on.pos { color:var(--pos); } .seg button.on.neg { color:var(--neg); } .seg button.on.spaar { color:#2E6F8E; }
         .fld { display:flex; flex-direction:column; gap:6px; margin-bottom:13px; }
         .fld span { font-size:12.5px; font-weight:600; color:var(--muted); }
         .fld input, .fld select { border:1px solid var(--line); background:var(--paper); border-radius:11px; padding:12px 13px; font-size:15px; font-family:inherit; color:var(--ink); outline:none; transition:.15s; }
