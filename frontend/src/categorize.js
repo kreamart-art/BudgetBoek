@@ -40,3 +40,14 @@ export function guessCategory(description, isIncome) {
   if (biz) return { category: biz, scope: "zakelijk" };
   return { category: matchRules(t, EXPENSE_RULES) || "Overig", scope: "prive" };
 }
+
+// Trefwoorden die op een overboeking naar/van een spaarrekening wijzen.
+// Zo'n transactie wordt als 'sparen' geïmporteerd en telt niet mee als inkomst/uitgave.
+// Breid de lijst gerust uit met de term die jouw bank gebruikt.
+const SAVINGS_KEYWORDS = ["spaarrekening"];
+
+// True als de omschrijving een spaarrekening-overboeking aanduidt.
+export function isSavings(description) {
+  const t = (description || "").toLowerCase();
+  return SAVINGS_KEYWORDS.some((w) => t.includes(w));
+}

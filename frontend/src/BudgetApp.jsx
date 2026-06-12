@@ -380,14 +380,20 @@ function Dashboard({ totals, reserve, reserveOn, chartData, goals, insights, set
 
 // ============================================================ TRANSACTIES
 function Transacties({ tx, onAdd, onEdit, onDel, onBookRecurring, onOpenCsv }) {
+  const [sub, setSub] = useState("flow");        // "flow" = inkomsten/uitgaven, "sparen" = spaarrekening
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState("alles");
-  const filtered = useMemo(() => tx.filter((x) => {
-    if (filter !== "alles" && x.type !== filter) return false;
+
+  const spaarTx = useMemo(() => tx.filter((x) => x.type === "sparen"), [tx]);
+  const flowTx = useMemo(() => tx.filter((x) => x.type !== "sparen"), [tx]);
+  const base = sub === "sparen" ? spaarTx : flowTx;
+
+  const filtered = useMemo(() => base.filter((x) => {
+    if (sub === "flow" && filter !== "alles" && x.type !== filter) return false;
     if (!q) return true;
     const s = q.toLowerCase();
     return (x.description || "").toLowerCase().includes(s) || x.category.toLowerCase().includes(s);
-  }), [tx, q, filter]);
+  }), [base, sub, q, filter]);
   const groups = useMemo(() => {
     const g = {};
     for (const x of filtered) { const k = new Date(x.date).toLocaleDateString("nl-NL", { month: "long", year: "numeric" }); (g[k] = g[k] || []).push(x); }
@@ -397,18 +403,29 @@ function Transacties({ tx, onAdd, onEdit, onDel, onBookRecurring, onOpenCsv }) {
   return (
     <div className="grid">
       <div className="card">
-        <div className="searchbar"><Search size={16} className="si" /><input placeholder="Zoek op naam of categorie…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
-        <div className="filterrow">
-          <div className="seg sm" style={{ flex: 1, marginBottom: 0 }}>
-            {[["alles", "Alles"], ["inkomst", "In"], ["uitgave", "Uit"], ["sparen", "Spaar"]].map(([k, l]) => (<button key={k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)}>{l}</button>))}
-          </div>
-          <button className="btn small ghost" onClick={onBookRecurring} title="Vaste lasten boeken"><Repeat size={14} /> Vaste lasten</button>
-          <button className="btn small ghost" onClick={onOpenCsv} title="Bankafschrift importeren"><FileUp size={14} /> CSV</button>
+        <div className="seg sm" style={{ marginBottom: 12 }}>
+          <button className={sub === "flow" ? "on" : ""} onClick={() => setSub("flow")}>Transacties</button>
+          <button className={sub === "sparen" ? "on" : ""} onClick={() => setSub("sparen")}>Sparen{spaarTx.length ? ` · ${spaarTx.length}` : ""}</button>
         </div>
+        <div className="searchbar"><Search size={16} className="si" /><input placeholder="Zoek op naam of categorie…" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        {sub === "flow" ? (
+          <div className="filterrow">
+            <div className="seg sm" style={{ flex: 1, marginBottom: 0 }}>
+              {[["alles", "Alles"], ["inkomst", "In"], ["uitgave", "Uit"]].map(([k, l]) => (<button key={k} className={filter === k ? "on" : ""} onClick={() => setFilter(k)}>{l}</button>))}
+            </div>
+            <button className="btn small ghost" onClick={onBookRecurring} title="Vaste lasten boeken"><Repeat size={14} /> Vaste lasten</button>
+            <button className="btn small ghost" onClick={onOpenCsv} title="Bankafschrift importeren"><FileUp size={14} /> CSV</button>
+          </div>
+        ) : (
+          <div className="filterrow">
+            <p className="muted" style={{ flex: 1, margin: 0 }}><PiggyBank size={13} style={{ verticalAlign: "-2px", color: "#2E6F8E" }} /> Overboekingen naar/van je spaarrekening — tellen niet mee bij inkomsten of uitgaven.</p>
+            <button className="btn small ghost" onClick={onOpenCsv} title="Bankafschrift importeren"><FileUp size={14} /> CSV</button>
+          </div>
+        )}
       </div>
 
       <div className="card">
-        {filtered.length === 0 && <p className="muted">Geen transacties gevonden.</p>}
+        {filtered.length === 0 && <p className="muted">{sub === "sparen" ? "Nog geen spaar-overboekingen. Importeer een bankafschrift of voeg er handmatig een toe." : "Geen transacties gevonden."}</p>}
         {Object.entries(groups).map(([month, items]) => (
           <div key={month} className="txgroup">
             <div className="txmonth">{month}</div>

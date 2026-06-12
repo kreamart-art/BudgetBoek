@@ -1,12 +1,12 @@
 import React, { useState, useMemo } from "react";
 import Papa from "papaparse"; // npm install papaparse
 import { Upload, X, Check, FileText, AlertTriangle, Home, Briefcase } from "lucide-react";
-import { guessCategory } from "./categorize";
+import { guessCategory, isSavings } from "./categorize";
 
 // Categorieën — houd gelijk aan die in budget-app.jsx
 const CATS = {
-  prive: { uitgave: ["Wonen", "Boodschappen", "Vervoer", "Verzekeringen", "Abonnementen", "Vrije tijd", "Zorg", "Overig"], inkomst: ["Salaris", "Toeslagen", "Cadeau", "Overig"] },
-  zakelijk: { uitgave: ["Software & tools", "Marketing", "Kantoor", "Belasting & BTW", "Verzekeringen", "Uitbesteding", "Overig"], inkomst: ["Freelance", "Project", "Overig"] },
+  prive: { uitgave: ["Wonen", "Boodschappen", "Vervoer", "Verzekeringen", "Abonnementen", "Vrije tijd", "Zorg", "Overig"], inkomst: ["Salaris", "Toeslagen", "Cadeau", "Overig"], sparen: ["Naar spaarrekening", "Van spaarrekening", "Overig"] },
+  zakelijk: { uitgave: ["Software & tools", "Marketing", "Kantoor", "Belasting & BTW", "Verzekeringen", "Uitbesteding", "Overig"], inkomst: ["Freelance", "Project", "Overig"], sparen: ["Naar spaarrekening", "Van spaarrekening", "Overig"] },
 };
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -79,14 +79,18 @@ export default function CsvImport({ existing = [], onImport, onClose }) {
       const amt = parseAmount(r[map.amount], map.debitCredit ? r[map.debitCredit] : null);
       const description = (map.description ? String(r[map.description] ?? "") : "").trim();
       if (!date || !amt) return { i, invalid: true };
+      // "spaarrekening" in de omschrijving → overboeking naar/van spaar (telt niet mee als in/uit).
+      const savings = isSavings(description);
+      const type = savings ? "sparen" : amt.type;
       const g = guessCategory(description, amt.type === "inkomst");
       const ov = overrides[i] || {};
       const scope = ov.scope || g.scope;
-      const category = ov.category || (CATS[scope][amt.type].includes(g.category) ? g.category : "Overig");
+      const dirCat = amt.type === "uitgave" ? "Naar spaarrekening" : "Van spaarrekening";
+      const category = ov.category || (savings ? dirCat : (CATS[scope][amt.type].includes(g.category) ? g.category : "Overig"));
       const dupKey = `${date.slice(0, 10)}|${amt.amount.toFixed(2)}|${description.toLowerCase().slice(0, 18)}`;
       const duplicate = existingKeys.has(dupKey);
       const include = ov.include != null ? ov.include : !duplicate;
-      return { i, date, description, amount: amt.amount, type: amt.type, scope, category, duplicate, include, invalid: false };
+      return { i, date, description, amount: amt.amount, type, scope, category, duplicate, include, invalid: false };
     });
   }, [rows, map, overrides, existingKeys]);
 
@@ -133,7 +137,8 @@ export default function CsvImport({ existing = [], onImport, onClose }) {
           .prow.dup .pdesc::after { content:" · mogelijk dubbel"; color:#C29B3E; font-weight:600; font-size:11px; }
           .pdesc { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
           .pdate { font-size:11px; color:#7A7E73; font-weight:400; }
-          .pamt { font-family:'Fraunces',serif; white-space:nowrap; } .pamt.uit { color:#C24B33; } .pamt.ink { color:#2E7D5B; }
+          .pamt { font-family:'Fraunces',serif; white-space:nowrap; } .pamt.uit { color:#C24B33; } .pamt.ink { color:#2E7D5B; } .pamt.spaar { color:#7A7E73; }
+          .sptag { display:inline-block; margin-left:6px; font-size:10px; font-weight:700; color:#2E6F8E; background:rgba(46,111,142,0.12); padding:1px 6px; border-radius:10px; vertical-align:middle; }
           .scopebtns { display:flex; gap:3px; }
           .scopebtns button { border:1px solid #E6E1D4; background:#FBFAF5; width:26px; height:26px; border-radius:7px; cursor:pointer; color:#7A7E73; display:grid; place-items:center; }
           .scopebtns button.on { background:#1F5A47; color:#fff; border-color:#1F5A47; }
@@ -182,8 +187,8 @@ export default function CsvImport({ existing = [], onImport, onClose }) {
               {valid.slice(0, 150).map((p) => (
                 <div key={p.i} className={`prow ${p.include ? "" : "off"} ${p.duplicate ? "dup" : ""}`}>
                   <input type="checkbox" className="chk" checked={p.include} onChange={(e) => setOv(p.i, { include: e.target.checked })} />
-                  <div className="pdesc">{p.description || "—"}<div className="pdate">{new Date(p.date).toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" })}</div></div>
-                  <div className={`pamt ${p.type === "uitgave" ? "uit" : "ink"}`}>{p.type === "uitgave" ? "−" : "+"}{new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(p.amount)}</div>
+                  <div className="pdesc">{p.description || "—"}{p.type === "sparen" && <span className="sptag">spaar</span>}<div className="pdate">{new Date(p.date).toLocaleDateString("nl-NL", { day: "numeric", month: "short", year: "numeric" })}</div></div>
+                  <div className={`pamt ${p.type === "uitgave" ? "uit" : p.type === "sparen" ? "spaar" : "ink"}`}>{p.type === "uitgave" ? "−" : p.type === "sparen" ? "" : "+"}{new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(p.amount)}</div>
                   <div className="scopebtns">
                     <button className={p.scope === "prive" ? "on" : ""} onClick={() => setOv(p.i, { scope: "prive", category: undefined })} title="Privé"><Home size={13} /></button>
                     <button className={p.scope === "zakelijk" ? "on" : ""} onClick={() => setOv(p.i, { scope: "zakelijk", category: undefined })} title="Zakelijk"><Briefcase size={13} /></button>
