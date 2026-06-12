@@ -387,6 +387,8 @@ function Transacties({ tx, onAdd, onEdit, onDel, onBookRecurring, onOpenCsv }) {
   const spaarTx = useMemo(() => tx.filter((x) => x.type === "sparen"), [tx]);
   const flowTx = useMemo(() => tx.filter((x) => x.type !== "sparen"), [tx]);
   const base = sub === "sparen" ? spaarTx : flowTx;
+  const spaarNaar = useMemo(() => spaarTx.filter((x) => (x.category || "").startsWith("Naar")).reduce((s, x) => s + x.amount, 0), [spaarTx]);
+  const spaarVan = useMemo(() => spaarTx.filter((x) => (x.category || "").startsWith("Van")).reduce((s, x) => s + x.amount, 0), [spaarTx]);
 
   const filtered = useMemo(() => base.filter((x) => {
     if (sub === "flow" && filter !== "alles" && x.type !== filter) return false;
@@ -417,10 +419,17 @@ function Transacties({ tx, onAdd, onEdit, onDel, onBookRecurring, onOpenCsv }) {
             <button className="btn small ghost" onClick={onOpenCsv} title="Bankafschrift importeren"><FileUp size={14} /> CSV</button>
           </div>
         ) : (
-          <div className="filterrow">
-            <p className="muted" style={{ flex: 1, margin: 0 }}><PiggyBank size={13} style={{ verticalAlign: "-2px", color: "#2E6F8E" }} /> Overboekingen naar/van je spaarrekening — tellen niet mee bij inkomsten of uitgaven.</p>
-            <button className="btn small ghost" onClick={onOpenCsv} title="Bankafschrift importeren"><FileUp size={14} /> CSV</button>
-          </div>
+          <>
+            <div className="spaarsum">
+              <div className="ss-cell"><span className="lbl">Naar spaar</span><strong>{fmtEUR(spaarNaar)}</strong></div>
+              <div className="ss-cell"><span className="lbl">Van spaar</span><strong>{fmtEUR(spaarVan)}</strong></div>
+              <div className="ss-cell net"><span className="lbl">Netto opzij</span><strong>{fmtEUR(spaarNaar - spaarVan)}</strong></div>
+            </div>
+            <div className="filterrow" style={{ marginTop: 10 }}>
+              <p className="muted" style={{ flex: 1, margin: 0 }}><PiggyBank size={13} style={{ verticalAlign: "-2px", color: "#2E6F8E" }} /> {spaarTx.length} overboeking{spaarTx.length === 1 ? "" : "en"} · tellen niet mee bij inkomsten of uitgaven.</p>
+              <button className="btn small ghost" onClick={onOpenCsv} title="Bankafschrift importeren"><FileUp size={14} /> CSV</button>
+            </div>
+          </>
         )}
       </div>
 
@@ -749,6 +758,12 @@ function Shell({ children }) {
         .searchbar .si { color:var(--muted); flex-shrink:0; }
         .searchbar input { border:none; background:none; outline:none; font-family:inherit; font-size:14px; width:100%; color:var(--ink); }
         .filterrow { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        .spaarsum { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:12px; }
+        .spaarsum .ss-cell { background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:10px 8px; text-align:center; }
+        .spaarsum .ss-cell .lbl { display:block; margin-bottom:3px; }
+        .spaarsum .ss-cell strong { font-family:'Fraunces',serif; font-size:17px; font-weight:500; white-space:nowrap; }
+        .spaarsum .ss-cell.net { background:rgba(46,111,142,0.08); border-color:rgba(46,111,142,0.25); }
+        .spaarsum .ss-cell.net strong { color:#2E6F8E; }
         .txgroup { margin-top:2px; }
         .txmonth { font-size:11px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--muted); margin:14px 0 6px; }
         .txrow { display:flex; align-items:center; gap:11px; padding:9px 0; border-bottom:1px solid var(--line); cursor:pointer; }
